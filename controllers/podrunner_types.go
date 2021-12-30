@@ -1,17 +1,23 @@
 package controllers
 
 import (
+	"fmt"
 	"github.com/evryfs/github-actions-runner-operator/api/v1alpha1"
-	"github.com/google/go-github/v33/github"
+	"github.com/google/go-github/v40/github"
 	"github.com/redhat-cop/operator-utils/pkg/util"
 	"github.com/thoas/go-funk"
 	corev1 "k8s.io/api/core/v1"
 	"sort"
+	"time"
 )
 
 type podRunnerPair struct {
 	pod    corev1.Pod
 	runner github.Runner
+}
+
+func (r *podRunnerPair) getNamespacedName() string {
+	return fmt.Sprintf("%s/%s", r.pod.Namespace, r.pod.Name)
 }
 
 type podRunnerPairList struct {
@@ -68,26 +74,27 @@ func (r podRunnerPairList) inSync() bool {
 	return r.numPods() == r.numRunners()
 }
 
-func (r podRunnerPairList) getIdlePods(sortOrder v1alpha1.SortOrder) []corev1.Pod {
-	idles := funk.Filter(r.pairs, func(pair podRunnerPair) bool {
-		return !(pair.runner.GetBusy() || util.IsBeingDeleted(&pair.pod))
-	}).([]podRunnerPair)
-	pods := funk.Map(idles, func(pair podRunnerPair) corev1.Pod {
-		return pair.pod
-	}).([]corev1.Pod)
-
-	sort.SliceStable(pods, func(i, j int) bool {
-		if sortOrder == v1alpha1.LeastRecent {
-			return pods[i].CreationTimestamp.Unix() < pods[j].CreationTimestamp.Unix()
-		}
-		return pods[i].CreationTimestamp.Unix() > pods[j].CreationTimestamp.Unix()
-	})
-
-	return pods
+func (r podRunnerPairList) numIdle() int {
+	return r.numRunners() - r.numBusy()
 }
 
-func (r podRunnerPairList) getPodsBeingDeleted() []podRunnerPair {
+func (r podRunnerPairList) getIdles(sortOrder v1alpha1.SortOrder, minTTL time.Duration) []podRunnerPair {
+	idles := funk.Filter(r.pairs, func(pair podRunnerPair) bool {
+		return !(pair.runner.GetBusy() || util.IsBeingDeleted(&pair.pod)) && time.Now().After(pair.pod.CreationTimestamp.Add(minTTL))
+	}).([]podRunnerPair)
+
+	sort.SliceStable(idles, func(i, j int) bool {
+		if sortOrder == v1alpha1.LeastRecent {
+			return idles[i].pod.CreationTimestamp.Unix() < idles[j].pod.CreationTimestamp.Unix()
+		}
+		return idles[i].pod.CreationTimestamp.Unix() > idles[j].pod.CreationTimestamp.Unix()
+	})
+
+	return idles
+}
+
+func (r podRunnerPairList) getPodsBeingDeletedOrEvictedOrCompleted() []podRunnerPair {
 	return funk.Filter(r.pairs, func(pair podRunnerPair) bool {
-		return util.IsBeingDeleted(&pair.pod)
+		return util.IsBeingDeleted(&pair.pod) || isEvicted(&pair.pod) || isCompleted(&pair.pod)
 	}).([]podRunnerPair)
 }

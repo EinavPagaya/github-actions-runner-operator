@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"github.com/evryfs/github-actions-runner-operator/api/v1alpha1"
-	"github.com/google/go-github/v33/github"
+	"github.com/google/go-github/v40/github"
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +19,7 @@ var podList = v1.PodList{
 			TypeMeta: metav1.TypeMeta{},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "name1",
-				CreationTimestamp: metav1.NewTime(time.Now()),
+				CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Minute)),
 			},
 			Spec:   v1.PodSpec{},
 			Status: v1.PodStatus{},
@@ -28,7 +28,7 @@ var podList = v1.PodList{
 			TypeMeta: metav1.TypeMeta{},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "name2",
-				CreationTimestamp: metav1.NewTime(time.Now().Add(time.Minute)),
+				CreationTimestamp: metav1.NewTime(time.Now()),
 			},
 			Spec:   v1.PodSpec{},
 			Status: v1.PodStatus{},
@@ -76,14 +76,18 @@ func TestSort(t *testing.T) {
 	testCases := []struct {
 		sortOrder         v1alpha1.SortOrder
 		podRunnerPairList podRunnerPairList
-		podList           []v1.Pod
+		podRunnerPair     []podRunnerPair
 	}{
-		{v1alpha1.LeastRecent, from(&podList, runners), []v1.Pod{podList.Items[0], podList.Items[1]}},
-		{v1alpha1.MostRecent, from(&podList, runners), []v1.Pod{podList.Items[1], podList.Items[0]}},
+		{v1alpha1.LeastRecent, from(&podList, runners), []podRunnerPair{
+			{podList.Items[0], *runners[0]},
+			{podList.Items[1], *runners[1]}}},
+		{v1alpha1.MostRecent, from(&podList, runners), []podRunnerPair{
+			{podList.Items[1], *runners[1]},
+			{podList.Items[0], *runners[0]}}},
 	}
 
 	for _, tc := range testCases {
-		podList := tc.podRunnerPairList.getIdlePods(tc.sortOrder)
-		assert.Equal(t, podList, tc.podList)
+		podList := tc.podRunnerPairList.getIdles(tc.sortOrder, time.Duration(0))
+		assert.Equal(t, tc.podRunnerPair, podList)
 	}
 }
